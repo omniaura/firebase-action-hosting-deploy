@@ -101,8 +101,9 @@ export async function getFirebaseTools(
       cacheHit = true;
       core.info(`Restored firebase-tools@${resolvedVersion} from cache`);
     }
-  } catch (error) {
-    core.warning(`Failed to restore cache: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.warning(`Failed to restore cache: ${message}`);
   }
 
   if (!cacheHit) {
@@ -115,10 +116,11 @@ export async function getFirebaseTools(
     try {
       await cache.saveCache([installDir], cacheKey);
       core.info(`Saved firebase-tools@${resolvedVersion} to cache`);
-    } catch (error) {
+    } catch (error: unknown) {
       // Cache save can fail if the key already exists (race condition)
       // or if there are other issues - don't fail the action for this
-      core.warning(`Failed to save cache: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      core.warning(`Failed to save cache: ${message}`);
     }
   }
 

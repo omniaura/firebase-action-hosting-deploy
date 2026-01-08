@@ -20,7 +20,7 @@ branding:
   color: "blue"
 runs:
   using: "node20"
-  main: "bin/action.min.js"
+  main: "bin/index.js"
 inputs:
   repoToken:
     description: "The GITHUB_TOKEN secret"

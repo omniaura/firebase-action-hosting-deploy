@@ -15,10 +15,11 @@
  */
 
 import * as core from "@actions/core";
-import * as tc from "@actions/tool-cache";
+import * as cache from "@actions/cache";
 import { exec } from "@actions/exec";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 
 const TOOL_NAME = "firebase-tools";
 
@@ -44,12 +45,29 @@ async function resolveVersion(version: string): Promise<string> {
 }
 
 /**
- * Installs firebase-tools to a directory and returns the path
+ * Gets the cache key for the firebase-tools installation
+ */
+function getCacheKey(version: string): string {
+  const platform = os.platform();
+  const arch = os.arch();
+  return `${TOOL_NAME}-${version}-${platform}-${arch}`;
+}
+
+/**
+ * Gets the installation directory path
+ */
+function getInstallDir(version: string): string {
+  const runnerTemp = process.env.RUNNER_TEMP || os.tmpdir();
+  return path.join(runnerTemp, `${TOOL_NAME}-${version}`);
+}
+
+/**
+ * Installs firebase-tools to a directory
  */
 async function installFirebaseTools(
   version: string,
   installDir: string
-): Promise<string> {
+): Promise<void> {
   // Create the install directory
   fs.mkdirSync(installDir, { recursive: true });
 
@@ -58,45 +76,51 @@ async function installFirebaseTools(
     cwd: installDir,
     silent: false,
   });
-
-  // Return the path to the firebase binary
-  const binPath = path.join(installDir, "node_modules", ".bin");
-  return binPath;
 }
 
 /**
  * Gets or installs firebase-tools with caching.
  * Returns the path to the firebase binary directory.
  */
-export async function getFirebaseTools(version: string = "latest"): Promise<string> {
+export async function getFirebaseTools(
+  version: string = "latest"
+): Promise<string> {
   // Resolve 'latest' to actual version for caching
   const resolvedVersion = await resolveVersion(version);
   core.info(`Firebase tools version: ${resolvedVersion}`);
 
-  // Check if already cached
-  let toolPath = tc.find(TOOL_NAME, resolvedVersion);
+  const cacheKey = getCacheKey(resolvedVersion);
+  const installDir = getInstallDir(resolvedVersion);
+  const binPath = path.join(installDir, "node_modules", ".bin");
 
-  if (toolPath) {
-    core.info(`Found cached firebase-tools@${resolvedVersion}`);
-  } else {
-    core.info(`Installing firebase-tools@${resolvedVersion}...`);
-
-    // Create a temporary directory for installation
-    const tempDir = path.join(
-      process.env.RUNNER_TEMP || "/tmp",
-      `firebase-tools-${resolvedVersion}-${Date.now()}`
-    );
-
-    // Install firebase-tools
-    await installFirebaseTools(resolvedVersion, tempDir);
-
-    // Cache the installation
-    toolPath = await tc.cacheDir(tempDir, TOOL_NAME, resolvedVersion);
-    core.info(`Cached firebase-tools@${resolvedVersion} to ${toolPath}`);
+  // Try to restore from GitHub's cache
+  let cacheHit = false;
+  try {
+    const restoredKey = await cache.restoreCache([installDir], cacheKey);
+    if (restoredKey) {
+      cacheHit = true;
+      core.info(`Restored firebase-tools@${resolvedVersion} from cache`);
+    }
+  } catch (error) {
+    core.warning(`Failed to restore cache: ${error.message}`);
   }
 
-  // Return the path to the bin directory
-  const binPath = path.join(toolPath, "node_modules", ".bin");
+  if (!cacheHit) {
+    core.info(`Installing firebase-tools@${resolvedVersion}...`);
+
+    // Install firebase-tools
+    await installFirebaseTools(resolvedVersion, installDir);
+
+    // Save to GitHub's cache
+    try {
+      await cache.saveCache([installDir], cacheKey);
+      core.info(`Saved firebase-tools@${resolvedVersion} to cache`);
+    } catch (error) {
+      // Cache save can fail if the key already exists (race condition)
+      // or if there are other issues - don't fail the action for this
+      core.warning(`Failed to save cache: ${error.message}`);
+    }
+  }
 
   // Add to PATH
   core.addPath(binPath);

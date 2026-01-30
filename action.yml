@@ -26,7 +26,7 @@ inputs:
     description: "The GITHUB_TOKEN secret"
     required: false
   firebaseServiceAccount:
-    description: "Firebase service account JSON"
+    description: "Firebase service account JSON or path to credentials file (for Workload Identity Federation)"
     required: true
   expires:
     description: "How long should a preview live? See the preview channels docs for options"

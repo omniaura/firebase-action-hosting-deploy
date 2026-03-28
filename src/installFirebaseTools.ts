@@ -23,6 +23,30 @@ import * as os from "os";
 
 const TOOL_NAME = "firebase-tools";
 
+function isSelfHostedRunner(): boolean {
+  return process.env.RUNNER_ENVIRONMENT === "self-hosted";
+}
+
+async function getPreinstalledFirebaseVersion(): Promise<string | undefined> {
+  let output = "";
+
+  try {
+    await exec("firebase", ["--version"], {
+      listeners: {
+        stdout: (data: Buffer) => {
+          output += data.toString();
+        },
+      },
+      silent: true,
+    });
+  } catch {
+    return undefined;
+  }
+
+  const version = output.trim();
+  return version.length > 0 ? version : undefined;
+}
+
 /**
  * Resolves 'latest' version to actual version number from npm registry
  */
@@ -85,6 +109,23 @@ async function installFirebaseTools(
 export async function getFirebaseTools(
   version: string = "latest"
 ): Promise<string> {
+  const preinstalledVersion = await getPreinstalledFirebaseVersion();
+  if (preinstalledVersion) {
+    core.info(`Found preinstalled firebase-tools@${preinstalledVersion} on PATH`);
+    if (isSelfHostedRunner() && (version === "latest" || version === preinstalledVersion)) {
+      core.info(
+        `Using preinstalled firebase-tools@${preinstalledVersion} on self-hosted runner; skipping cache and installation`
+      );
+      return "";
+    }
+
+    if (isSelfHostedRunner() && version !== "latest" && version !== preinstalledVersion) {
+      core.info(
+        `Requested firebase-tools version ${version} differs from preinstalled ${preinstalledVersion}; falling back to managed install`
+      );
+    }
+  }
+
   // Resolve 'latest' to actual version for caching
   const resolvedVersion = await resolveVersion(version);
   core.info(`Firebase tools version: ${resolvedVersion}`);

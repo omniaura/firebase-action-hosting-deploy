@@ -100,6 +100,27 @@ describe("deploy", () => {
     expect(secondCallDeployFlags).toContain("--debug");
   });
 
+  describe("running firebase-tools via a pinned Node", () => {
+    it("invokes the firebase entrypoint with the provided node binary", async () => {
+      // @ts-ignore read-only property
+      exec.exec = jest.fn(fakeExec);
+
+      const config: ChannelDeployConfig = {
+        ...baseChannelDeployConfig,
+        firebaseBin: "/opt/firebase-tools/lib/bin/firebase.js",
+        nodeBin: "/opt/node-24.16.0/bin/node",
+      };
+
+      await deployPreview("my-file", config);
+
+      // @ts-ignore Jest adds a magic "mock" property
+      const [command, deployFlags] = exec.exec.mock.calls[0];
+      expect(command).toBe("/opt/node-24.16.0/bin/node");
+      expect(deployFlags[0]).toBe("/opt/firebase-tools/lib/bin/firebase.js");
+      expect(deployFlags).toContain("hosting:channel:deploy");
+    });
+  });
+
   describe("deploy to preview channel", () => {
     it("calls exec and interprets the output", async () => {
       // @ts-ignore read-only property

@@ -6,6 +6,23 @@ import * as os from "os";
 import * as path from "path";
 import { getFirebaseTools } from "../src/installFirebaseTools";
 
+/**
+ * Writes a minimal firebase-tools package (package.json + bin script) under
+ * `parentNodeModules` so the entrypoint resolver has something to find.
+ * Returns the absolute path to the bin entrypoint.
+ */
+function writeFakeFirebaseTools(parentNodeModules: string): string {
+  const pkgDir = path.join(parentNodeModules, "firebase-tools");
+  const binRel = path.join("lib", "bin", "firebase.js");
+  fs.mkdirSync(path.join(pkgDir, "lib", "bin"), { recursive: true });
+  fs.writeFileSync(
+    path.join(pkgDir, "package.json"),
+    JSON.stringify({ name: "firebase-tools", bin: { firebase: binRel } })
+  );
+  fs.writeFileSync(path.join(pkgDir, binRel), "#!/usr/bin/env node\n");
+  return path.join(pkgDir, binRel);
+}
+
 describe("getFirebaseTools", () => {
   const originalRunnerEnvironment = process.env.RUNNER_ENVIRONMENT;
   const originalRunnerTemp = process.env.RUNNER_TEMP;
@@ -29,8 +46,12 @@ describe("getFirebaseTools", () => {
     jest.restoreAllMocks();
   });
 
-  it("uses preinstalled firebase on self-hosted runners without cache or install", async () => {
+  it("uses preinstalled firebase on self-hosted runners and resolves its entrypoint", async () => {
     process.env.RUNNER_ENVIRONMENT = "self-hosted";
+
+    const globalRoot = path.join(runnerTemp, "global-node-modules");
+    fs.mkdirSync(globalRoot, { recursive: true });
+    const expectedEntrypoint = writeFakeFirebaseTools(globalRoot);
 
     const execSpy = jest
       .spyOn(execModule, "exec")
@@ -40,12 +61,19 @@ describe("getFirebaseTools", () => {
           return 0;
         }
 
-        throw new Error(`unexpected command: ${command} ${(args || []).join(" ")}`);
+        if (command === "npm" && args?.[0] === "root" && args?.[1] === "-g") {
+          options?.listeners?.stdout?.(Buffer.from(globalRoot, "utf8"));
+          return 0;
+        }
+
+        throw new Error(
+          `unexpected command: ${command} ${(args || []).join(" ")}`
+        );
       });
 
-    await expect(getFirebaseTools("latest")).resolves.toBe("");
+    await expect(getFirebaseTools("latest")).resolves.toBe(expectedEntrypoint);
 
-    expect(execSpy).toHaveBeenCalledTimes(1);
+    expect(execSpy).toHaveBeenCalledTimes(2);
     expect(cache.restoreCache).not.toHaveBeenCalled();
     expect(cache.saveCache).not.toHaveBeenCalled();
     expect(core.addPath).not.toHaveBeenCalled();
@@ -57,7 +85,7 @@ describe("getFirebaseTools", () => {
     );
   });
 
-  it("falls back to managed install when a pinned version differs", async () => {
+  it("falls back to managed install when a pinned version differs and resolves its entrypoint", async () => {
     process.env.RUNNER_ENVIRONMENT = "self-hosted";
 
     const execSpy = jest
@@ -69,14 +97,20 @@ describe("getFirebaseTools", () => {
         }
 
         if (command === "npm" && args?.[0] === "install") {
+          // Simulate npm laying down the package in the install dir.
+          writeFakeFirebaseTools(
+            path.join(String(options?.cwd), "node_modules")
+          );
           return 0;
         }
 
-        throw new Error(`unexpected command: ${command} ${(args || []).join(" ")}`);
+        throw new Error(
+          `unexpected command: ${command} ${(args || []).join(" ")}`
+        );
       });
 
     await expect(getFirebaseTools("15.13.0")).resolves.toMatch(
-      /firebase-tools-15\.13\.0\/node_modules\/\.bin$/
+      /firebase-tools-15\.13\.0[\\/]node_modules[\\/]firebase-tools[\\/]lib[\\/]bin[\\/]firebase\.js$/
     );
 
     expect(execSpy).toHaveBeenCalledTimes(2);

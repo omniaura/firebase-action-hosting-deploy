@@ -48,6 +48,60 @@ async function getPreinstalledFirebaseVersion(): Promise<string | undefined> {
 }
 
 /**
+ * Resolves the firebase-tools JS entrypoint (e.g. `lib/bin/firebase.js`) from a
+ * package directory by reading its `package.json` `bin` field. This entrypoint
+ * is run directly with the action's own Node runtime (see deploy.ts), so it must
+ * be the underlying script rather than the `firebase` binary on PATH — whose
+ * shebang can pin it to a system Node carrying the keep-alive regression.
+ *
+ * Returns undefined if the entrypoint can't be located.
+ */
+function resolveEntrypoint(packageDir: string): string | undefined {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(packageDir, "package.json"), "utf8")
+    );
+    const bin = pkg.bin;
+    const relative = typeof bin === "string" ? bin : bin?.firebase;
+    if (!relative) {
+      return undefined;
+    }
+    const entrypoint = path.join(packageDir, relative);
+    return fs.existsSync(entrypoint) ? entrypoint : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Locates the entrypoint of a globally-installed (preinstalled) firebase-tools
+ * by asking npm for the global node_modules root.
+ */
+async function resolvePreinstalledEntrypoint(): Promise<string | undefined> {
+  let output = "";
+
+  try {
+    await exec("npm", ["root", "-g"], {
+      listeners: {
+        stdout: (data: Buffer) => {
+          output += data.toString();
+        },
+      },
+      silent: true,
+    });
+  } catch {
+    return undefined;
+  }
+
+  const globalRoot = output.trim();
+  if (!globalRoot) {
+    return undefined;
+  }
+
+  return resolveEntrypoint(path.join(globalRoot, TOOL_NAME));
+}
+
+/**
  * Resolves 'latest' version to actual version number from npm registry
  */
 async function resolveVersion(version: string): Promise<string> {
@@ -104,22 +158,43 @@ async function installFirebaseTools(
 
 /**
  * Gets or installs firebase-tools with caching.
- * Returns the path to the firebase binary directory.
+ *
+ * Returns the path to the firebase-tools JS entrypoint (e.g.
+ * `.../firebase-tools/lib/bin/firebase.js`), which the deploy step runs with a
+ * pinned Node interpreter. Returns "" if the entrypoint can't be resolved, in
+ * which case the deploy step falls back to the `firebase` binary on PATH.
  */
 export async function getFirebaseTools(
   version: string = "latest"
 ): Promise<string> {
   const preinstalledVersion = await getPreinstalledFirebaseVersion();
   if (preinstalledVersion) {
-    core.info(`Found preinstalled firebase-tools@${preinstalledVersion} on PATH`);
-    if (isSelfHostedRunner() && (version === "latest" || version === preinstalledVersion)) {
+    core.info(
+      `Found preinstalled firebase-tools@${preinstalledVersion} on PATH`
+    );
+    if (
+      isSelfHostedRunner() &&
+      (version === "latest" || version === preinstalledVersion)
+    ) {
       core.info(
         `Using preinstalled firebase-tools@${preinstalledVersion} on self-hosted runner; skipping cache and installation`
       );
-      return "";
+      const entrypoint = await resolvePreinstalledEntrypoint();
+      if (entrypoint) {
+        core.info(`Resolved firebase-tools entrypoint: ${entrypoint}`);
+      } else {
+        core.warning(
+          "Could not resolve the preinstalled firebase-tools entrypoint; falling back to the firebase binary on PATH"
+        );
+      }
+      return entrypoint ?? "";
     }
 
-    if (isSelfHostedRunner() && version !== "latest" && version !== preinstalledVersion) {
+    if (
+      isSelfHostedRunner() &&
+      version !== "latest" &&
+      version !== preinstalledVersion
+    ) {
       core.info(
         `Requested firebase-tools version ${version} differs from preinstalled ${preinstalledVersion}; falling back to managed install`
       );
@@ -165,9 +240,20 @@ export async function getFirebaseTools(
     }
   }
 
-  // Add to PATH
+  // Add to PATH for any tooling that still expects the firebase binary there.
   core.addPath(binPath);
   core.info(`Added ${binPath} to PATH`);
 
-  return binPath;
+  const entrypoint = resolveEntrypoint(
+    path.join(installDir, "node_modules", TOOL_NAME)
+  );
+  if (entrypoint) {
+    core.info(`Resolved firebase-tools entrypoint: ${entrypoint}`);
+  } else {
+    core.warning(
+      "Could not resolve the installed firebase-tools entrypoint; falling back to the firebase binary on PATH"
+    );
+  }
+
+  return entrypoint ?? "";
 }

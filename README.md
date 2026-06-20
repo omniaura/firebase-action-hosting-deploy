@@ -16,6 +16,25 @@ This fork adds **GitHub Actions caching for `firebase-tools`**, which significan
 
 Typical time savings of **30-60 seconds** per deployment by eliminating the `firebase-tools` installation step.
 
+### Pinned Node runtime
+
+`firebase-tools` is invoked with a **pinned Node.js** (default `24.16.0`,
+configurable via the [`nodeVersion`](#nodeversion-string) input) downloaded and
+cached with `@actions/tool-cache`, instead of running the `firebase` binary
+directly off `PATH`.
+
+This sidesteps the Node.js `http.Agent` keep-alive regression
+([nodejs/node#63989](https://github.com/nodejs/node/issues/63989)) shipped in
+Node `>=22.23.0` / `>=24.17.0` / `>=26.3.1` (the 2026-06-18 security releases),
+which throws `ERR_STREAM_PREMATURE_CLOSE` in `gaxios`/`google-auth-library` and
+breaks the Workload Identity Federation token exchange firebase-tools uses to
+authenticate (`Failed to authenticate, have you run firebase login?`). On
+self-hosted runners the global `/usr/local/bin/firebase` shebang pins it to the
+system Node, so simply calling `firebase` inherits the bad runtime regardless of
+`setup-node`. Running the firebase-tools entrypoint with a pinned, known-good
+Node fixes this without changing how the CLI is cached or reused. Bump
+`nodeVersion` once Node ships a fix.
+
 ---
 
 ## Features
@@ -170,6 +189,12 @@ file relative to the root of your repository. Defaults to `.` (the root of your 
 ### `firebaseToolsVersion` _{string}_
 
 The version of `firebase-tools` to use. If not specified, defaults to `latest`.
+
+### `nodeVersion` _{string}_
+
+The Node.js version used to run `firebase-tools`. Defaults to `24.16.0`. See
+[Pinned Node runtime](#pinned-node-runtime) for why this exists; you generally
+shouldn't need to change it.
 
 ### `disableComment` _{boolean}_
 

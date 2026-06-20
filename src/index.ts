@@ -33,6 +33,7 @@ import {
 } from "./deploy";
 import { getChannelId } from "./getChannelId";
 import { getFirebaseTools } from "./installFirebaseTools";
+import { getPinnedNode } from "./setupNode";
 import {
   getURLsMarkdownFromChannelDeployResult,
   postChannelSuccessComment,
@@ -53,6 +54,7 @@ const target = getInput("target");
 const firebaseToolsVersion = getInput("firebaseToolsVersion");
 const disableComment = getInput("disableComment");
 const force = getInput("force") === "true";
+const nodeVersion = getInput("nodeVersion");
 
 async function run() {
   const isPullRequest = !!context.payload.pull_request;
@@ -84,7 +86,11 @@ async function run() {
     endGroup();
 
     startGroup("Installing Firebase CLI");
-    await getFirebaseTools(firebaseToolsVersion);
+    const firebaseBin = await getFirebaseTools(firebaseToolsVersion);
+    endGroup();
+
+    startGroup("Setting up pinned Node.js runtime");
+    const nodeBin = await getPinnedNode(nodeVersion);
     endGroup();
 
     startGroup("Setting up CLI credentials");
@@ -101,6 +107,8 @@ async function run() {
         target,
         firebaseToolsVersion,
         force,
+        firebaseBin,
+        nodeBin,
       });
       if (deployment.status === "error") {
         throw Error((deployment as ErrorResult).error);
@@ -130,6 +138,8 @@ async function run() {
       target,
       firebaseToolsVersion,
       force,
+      firebaseBin,
+      nodeBin,
     });
 
     if (deployment.status === "error") {

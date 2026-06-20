@@ -46,6 +46,12 @@ type DeployConfig = {
   // Optional version specification for firebase-tools. Defaults to `latest`.
   firebaseToolsVersion?: string;
   force?: boolean;
+  // Path to the firebase-tools JS entrypoint (e.g. lib/bin/firebase.js). When
+  // set, it is run with `nodeBin` instead of the `firebase` binary on PATH.
+  firebaseBin?: string;
+  // Path to the Node interpreter used to run `firebaseBin`. Defaults to the
+  // action runtime Node when unset.
+  nodeBin?: string;
 };
 
 export type ChannelDeployConfig = DeployConfig & {
@@ -78,17 +84,34 @@ async function execWithCredentials(
   args: string[],
   projectId,
   gacFilename,
-  opts: { debug?: boolean; firebaseToolsVersion?: string; force?: boolean }
+  opts: {
+    debug?: boolean;
+    firebaseToolsVersion?: string;
+    force?: boolean;
+    firebaseBin?: string;
+    nodeBin?: string;
+  }
 ) {
   let deployOutputBuf: Buffer[] = [];
   const debug = opts.debug || false;
   const force = opts.force;
+  const firebaseBin = opts.firebaseBin;
+  const nodeBin = opts.nodeBin;
+
+  // When we know the firebase-tools JS entrypoint, run it with a pinned Node
+  // interpreter (process.execPath by default). This bypasses the `firebase`
+  // binary's shebang, which on the runner can be pinned to a system Node that
+  // carries the keep-alive regression (nodejs/node#63989) breaking the
+  // Workload Identity Federation token exchange. Fall back to the `firebase`
+  // binary on PATH only if the entrypoint could not be resolved.
+  const command = firebaseBin ? nodeBin || process.execPath : "firebase";
+  const baseArgs = firebaseBin ? [firebaseBin] : [];
 
   try {
-    // Use the globally installed firebase command (installed and cached by installFirebaseTools)
     await exec(
-      "firebase",
+      command,
       [
+        ...baseArgs,
         ...args,
         ...(projectId ? ["--project", projectId] : []),
         ...(force ? ["--force"] : []),
@@ -120,6 +143,8 @@ async function execWithCredentials(
       await execWithCredentials(args, projectId, gacFilename, {
         debug: true,
         force,
+        firebaseBin,
+        nodeBin,
       });
     } else {
       throw e;
@@ -135,8 +160,16 @@ export async function deployPreview(
   gacFilename: string,
   deployConfig: ChannelDeployConfig
 ) {
-  const { projectId, channelId, target, expires, firebaseToolsVersion, force } =
-    deployConfig;
+  const {
+    projectId,
+    channelId,
+    target,
+    expires,
+    firebaseToolsVersion,
+    force,
+    firebaseBin,
+    nodeBin,
+  } = deployConfig;
 
   const deploymentText = await execWithCredentials(
     [
@@ -147,7 +180,7 @@ export async function deployPreview(
     ],
     projectId,
     gacFilename,
-    { firebaseToolsVersion, force }
+    { firebaseToolsVersion, force, firebaseBin, nodeBin }
   );
 
   const deploymentResult = JSON.parse(deploymentText.trim()) as
@@ -161,14 +194,20 @@ export async function deployProductionSite(
   gacFilename,
   productionDeployConfig: ProductionDeployConfig
 ) {
-  const { projectId, target, firebaseToolsVersion, force } =
-    productionDeployConfig;
+  const {
+    projectId,
+    target,
+    firebaseToolsVersion,
+    force,
+    firebaseBin,
+    nodeBin,
+  } = productionDeployConfig;
 
   const deploymentText = await execWithCredentials(
     ["deploy", "--only", `hosting${target ? ":" + target : ""}`],
     projectId,
     gacFilename,
-    { firebaseToolsVersion, force }
+    { firebaseToolsVersion, force, firebaseBin, nodeBin }
   );
 
   const deploymentResult = JSON.parse(deploymentText) as

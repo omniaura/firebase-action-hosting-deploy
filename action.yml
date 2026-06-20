@@ -50,6 +50,16 @@ inputs:
       The version of firebase-tools to use. Defaults to `latest`.
     default: latest
     required: false
+  nodeVersion:
+    description: >-
+      The Node.js version used to run firebase-tools. firebase-tools is invoked
+      with this pinned Node rather than the runner's system Node, whose
+      `firebase` shebang may point at a version carrying the Node keep-alive
+      regression (nodejs/node#63989) that breaks Firebase authentication.
+      Defaults to `24.16.0`, the last release before the regression. Bump this
+      once Node ships a fix.
+    default: "24.16.0"
+    required: false
   disableComment:
     description: >-
       Disable auto-commenting with the preview channel URL to the pull request

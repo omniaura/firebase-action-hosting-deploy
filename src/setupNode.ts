@@ -43,7 +43,14 @@ function nodePlatform(): "linux" | "darwin" | "win" {
 
 /** Maps os.arch() to the Node.js dist arch slug. */
 function nodeArch(): string {
-  return os.arch() === "arm64" ? "arm64" : "x64";
+  const arch = os.arch();
+  if (arch === "arm64" || arch === "x64") {
+    return arch;
+  }
+  core.warning(
+    `Unsupported architecture "${arch}"; attempting the x64 Node.js build, which may not run on this runner`
+  );
+  return "x64";
 }
 
 /**

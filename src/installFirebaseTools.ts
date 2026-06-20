@@ -161,8 +161,10 @@ async function installFirebaseTools(
  *
  * Returns the path to the firebase-tools JS entrypoint (e.g.
  * `.../firebase-tools/lib/bin/firebase.js`), which the deploy step runs with a
- * pinned Node interpreter. Returns "" if the entrypoint can't be resolved, in
- * which case the deploy step falls back to the `firebase` binary on PATH.
+ * pinned Node interpreter. If a preinstalled entrypoint can't be resolved it
+ * falls back to a managed install; if that entrypoint can't be resolved either
+ * it throws, rather than silently letting the deploy step fall back to the
+ * regressed `firebase` binary on PATH (which would defeat the mitigation).
  */
 export async function getFirebaseTools(
   version: string = "latest"
@@ -182,12 +184,11 @@ export async function getFirebaseTools(
       const entrypoint = await resolvePreinstalledEntrypoint();
       if (entrypoint) {
         core.info(`Resolved firebase-tools entrypoint: ${entrypoint}`);
-      } else {
-        core.warning(
-          "Could not resolve the preinstalled firebase-tools entrypoint; falling back to the firebase binary on PATH"
-        );
+        return entrypoint;
       }
-      return entrypoint ?? "";
+      core.warning(
+        "Could not resolve the preinstalled firebase-tools entrypoint; falling back to a managed firebase-tools install"
+      );
     }
 
     if (
@@ -247,13 +248,12 @@ export async function getFirebaseTools(
   const entrypoint = resolveEntrypoint(
     path.join(installDir, "node_modules", TOOL_NAME)
   );
-  if (entrypoint) {
-    core.info(`Resolved firebase-tools entrypoint: ${entrypoint}`);
-  } else {
-    core.warning(
-      "Could not resolve the installed firebase-tools entrypoint; falling back to the firebase binary on PATH"
+  if (!entrypoint) {
+    throw new Error(
+      "Could not resolve the installed firebase-tools entrypoint from its package.json"
     );
   }
 
-  return entrypoint ?? "";
+  core.info(`Resolved firebase-tools entrypoint: ${entrypoint}`);
+  return entrypoint;
 }

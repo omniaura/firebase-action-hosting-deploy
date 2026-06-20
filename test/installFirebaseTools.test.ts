@@ -118,4 +118,80 @@ describe("getFirebaseTools", () => {
     expect(cache.saveCache).toHaveBeenCalledTimes(1);
     expect(core.addPath).toHaveBeenCalledTimes(1);
   });
+
+  it("falls through from an unresolvable preinstall to a managed install", async () => {
+    process.env.RUNNER_ENVIRONMENT = "self-hosted";
+
+    jest
+      .spyOn(execModule, "exec")
+      .mockImplementation(async (command, args, options) => {
+        if (command === "firebase" && args?.[0] === "--version") {
+          options?.listeners?.stdout?.(Buffer.from("15.12.0", "utf8"));
+          return 0;
+        }
+
+        // Global root has no firebase-tools, so the preinstalled entrypoint
+        // cannot be resolved and we must fall through to a managed install.
+        if (command === "npm" && args?.[0] === "root" && args?.[1] === "-g") {
+          options?.listeners?.stdout?.(Buffer.from(runnerTemp, "utf8"));
+          return 0;
+        }
+
+        if (command === "npm" && args?.[0] === "view") {
+          options?.listeners?.stdout?.(Buffer.from("15.12.0", "utf8"));
+          return 0;
+        }
+
+        if (command === "npm" && args?.[0] === "install") {
+          writeFakeFirebaseTools(
+            path.join(String(options?.cwd), "node_modules")
+          );
+          return 0;
+        }
+
+        throw new Error(
+          `unexpected command: ${command} ${(args || []).join(" ")}`
+        );
+      });
+
+    await expect(getFirebaseTools("latest")).resolves.toMatch(
+      /node_modules[\\/]firebase-tools[\\/]lib[\\/]bin[\\/]firebase\.js$/
+    );
+  });
+
+  it("throws instead of falling back to PATH when no entrypoint can be resolved", async () => {
+    process.env.RUNNER_ENVIRONMENT = "self-hosted";
+
+    jest
+      .spyOn(execModule, "exec")
+      .mockImplementation(async (command, args, options) => {
+        if (command === "firebase" && args?.[0] === "--version") {
+          options?.listeners?.stdout?.(Buffer.from("15.12.0", "utf8"));
+          return 0;
+        }
+
+        if (command === "npm" && args?.[0] === "root" && args?.[1] === "-g") {
+          options?.listeners?.stdout?.(Buffer.from(runnerTemp, "utf8"));
+          return 0;
+        }
+
+        if (command === "npm" && args?.[0] === "view") {
+          options?.listeners?.stdout?.(Buffer.from("15.12.0", "utf8"));
+          return 0;
+        }
+
+        // npm install resolves but lays down nothing the resolver can find.
+        if (command === "npm" && args?.[0] === "install") {
+          return 0;
+        }
+
+        throw new Error(
+          `unexpected command: ${command} ${(args || []).join(" ")}`
+        );
+      });
+
+    await expect(getFirebaseTools("latest")).rejects.toThrow(
+      /Could not resolve the installed firebase-tools entrypoint/
+    );
+  });
 });

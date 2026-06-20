@@ -46,18 +46,74 @@ describe("getFirebaseTools", () => {
     jest.restoreAllMocks();
   });
 
-  it("uses preinstalled firebase on self-hosted runners and resolves its entrypoint", async () => {
+  it("resolves the preinstalled entrypoint by following the firebase binary on PATH", async () => {
     process.env.RUNNER_ENVIRONMENT = "self-hosted";
 
     const globalRoot = path.join(runnerTemp, "global-node-modules");
     fs.mkdirSync(globalRoot, { recursive: true });
-    const expectedEntrypoint = writeFakeFirebaseTools(globalRoot);
+    const realEntrypoint = writeFakeFirebaseTools(globalRoot);
+    // Simulate the global `firebase` bin being a symlink to the JS entrypoint.
+    const firebaseBinLink = path.join(runnerTemp, "firebase");
+    fs.symlinkSync(realEntrypoint, firebaseBinLink);
 
     const execSpy = jest
       .spyOn(execModule, "exec")
       .mockImplementation(async (command, args, options) => {
         if (command === "firebase" && args?.[0] === "--version") {
           options?.listeners?.stdout?.(Buffer.from("15.12.0", "utf8"));
+          return 0;
+        }
+
+        if (
+          (command === "which" || command === "where") &&
+          args?.[0] === "firebase"
+        ) {
+          options?.listeners?.stdout?.(Buffer.from(firebaseBinLink, "utf8"));
+          return 0;
+        }
+
+        throw new Error(
+          `unexpected command: ${command} ${(args || []).join(" ")}`
+        );
+      });
+
+    await expect(getFirebaseTools("latest")).resolves.toBe(
+      fs.realpathSync(realEntrypoint)
+    );
+
+    // Resolved from the PATH binary; npm root -g is never consulted.
+    expect(execSpy).toHaveBeenCalledTimes(2);
+    expect(cache.restoreCache).not.toHaveBeenCalled();
+    expect(cache.saveCache).not.toHaveBeenCalled();
+    expect(core.addPath).not.toHaveBeenCalled();
+    expect(core.info).toHaveBeenCalledWith(
+      "Found preinstalled firebase-tools@15.12.0 on PATH"
+    );
+    expect(core.info).toHaveBeenCalledWith(
+      "Using preinstalled firebase-tools@15.12.0 on self-hosted runner; skipping cache and installation"
+    );
+  });
+
+  it("falls back to npm root -g when the firebase binary isn't a JS entrypoint", async () => {
+    process.env.RUNNER_ENVIRONMENT = "self-hosted";
+
+    const globalRoot = path.join(runnerTemp, "global-node-modules");
+    fs.mkdirSync(globalRoot, { recursive: true });
+    const expectedEntrypoint = writeFakeFirebaseTools(globalRoot);
+
+    jest
+      .spyOn(execModule, "exec")
+      .mockImplementation(async (command, args, options) => {
+        if (command === "firebase" && args?.[0] === "--version") {
+          options?.listeners?.stdout?.(Buffer.from("15.12.0", "utf8"));
+          return 0;
+        }
+
+        // `which firebase` finds nothing resolvable to a JS file.
+        if (
+          (command === "which" || command === "where") &&
+          args?.[0] === "firebase"
+        ) {
           return 0;
         }
 
@@ -72,17 +128,7 @@ describe("getFirebaseTools", () => {
       });
 
     await expect(getFirebaseTools("latest")).resolves.toBe(expectedEntrypoint);
-
-    expect(execSpy).toHaveBeenCalledTimes(2);
-    expect(cache.restoreCache).not.toHaveBeenCalled();
-    expect(cache.saveCache).not.toHaveBeenCalled();
     expect(core.addPath).not.toHaveBeenCalled();
-    expect(core.info).toHaveBeenCalledWith(
-      "Found preinstalled firebase-tools@15.12.0 on PATH"
-    );
-    expect(core.info).toHaveBeenCalledWith(
-      "Using preinstalled firebase-tools@15.12.0 on self-hosted runner; skipping cache and installation"
-    );
   });
 
   it("falls back to managed install when a pinned version differs and resolves its entrypoint", async () => {
@@ -130,6 +176,13 @@ describe("getFirebaseTools", () => {
           return 0;
         }
 
+        if (
+          (command === "which" || command === "where") &&
+          args?.[0] === "firebase"
+        ) {
+          return 0;
+        }
+
         // Global root has no firebase-tools, so the preinstalled entrypoint
         // cannot be resolved and we must fall through to a managed install.
         if (command === "npm" && args?.[0] === "root" && args?.[1] === "-g") {
@@ -167,6 +220,13 @@ describe("getFirebaseTools", () => {
       .mockImplementation(async (command, args, options) => {
         if (command === "firebase" && args?.[0] === "--version") {
           options?.listeners?.stdout?.(Buffer.from("15.12.0", "utf8"));
+          return 0;
+        }
+
+        if (
+          (command === "which" || command === "where") &&
+          args?.[0] === "firebase"
+        ) {
           return 0;
         }
 

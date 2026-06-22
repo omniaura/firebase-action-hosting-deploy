@@ -98,19 +98,25 @@ async function resolveFirebaseBinaryEntrypoint(): Promise<string | undefined> {
     return undefined;
   }
 
-  const binPath = output.split(/\r?\n/)[0].trim();
-  if (!binPath) {
-    return undefined;
+  // `where` (Windows) can list multiple matches (e.g. a .cmd shim before the
+  // real script); check each candidate for one that resolves to a JS file.
+  const candidates = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const realPath = fs.realpathSync(candidate);
+      if (realPath.endsWith(".js") && fs.existsSync(realPath)) {
+        return realPath;
+      }
+    } catch {
+      // Unresolvable candidate; try the next one.
+    }
   }
 
-  try {
-    const realPath = fs.realpathSync(binPath);
-    return realPath.endsWith(".js") && fs.existsSync(realPath)
-      ? realPath
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  return undefined;
 }
 
 /**

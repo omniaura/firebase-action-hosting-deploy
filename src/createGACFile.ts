@@ -25,7 +25,9 @@ export async function createGacFile(googleApplicationCredentials: string) {
     googleApplicationCredentials.startsWith("/") &&
     existsSync(googleApplicationCredentials)
   ) {
-    console.log("Using existing credentials file from Workload Identity Federation");
+    console.log(
+      "Using existing credentials file from Workload Identity Federation"
+    );
     return googleApplicationCredentials;
   }
 

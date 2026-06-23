@@ -186,4 +186,20 @@ async function run() {
   }
 }
 
-run();
+// This action's own process runs on the runner's system Node (via `using:
+// node24` in action.yml) — which we can't pin, unlike the Node used to invoke
+// firebase-tools. On Node versions carrying the keep-alive regression
+// (nodejs/node#63989), an idle keep-alive socket left in octokit's undici
+// connection pool throws ERR_STREAM_PREMATURE_CLOSE during process teardown.
+// That fires *after* run()'s awaited work has already settled (deploy +
+// comment + check update all succeeded), so it bypasses the try/catch above and
+// crashes an otherwise-green run with exit code 1 and no captured output.
+// Exit explicitly once our work has settled so a deferred socket close can't
+// flip the result.
+run()
+  .catch((error) => {
+    setFailed(error instanceof Error ? error.message : String(error));
+  })
+  .finally(() => {
+    process.exit(process.exitCode ?? 0);
+  });

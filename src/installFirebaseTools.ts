@@ -74,12 +74,63 @@ function resolveEntrypoint(packageDir: string): string | undefined {
 }
 
 /**
- * Locates the entrypoint of a globally-installed (preinstalled) firebase-tools
- * by asking npm for the global node_modules root.
+ * Follows the `firebase` binary on PATH to its underlying JS file. npm installs
+ * a global package's bin as a symlink to the package's bin script, so resolving
+ * the real path of `firebase` yields `.../firebase-tools/lib/bin/firebase.js`
+ * directly — independent of npm's configured global prefix (which `npm root -g`
+ * can report incorrectly when Node is managed by a version manager). Returns
+ * undefined if `firebase` isn't on PATH or doesn't resolve to a JS file (e.g.
+ * the standalone, self-contained CLI binary, which we can't run via `node`).
  */
-async function resolvePreinstalledEntrypoint(): Promise<string | undefined> {
+async function resolveFirebaseBinaryEntrypoint(): Promise<string | undefined> {
   let output = "";
 
+  try {
+    await exec(process.platform === "win32" ? "where" : "which", ["firebase"], {
+      listeners: {
+        stdout: (data: Buffer) => {
+          output += data.toString();
+        },
+      },
+      silent: true,
+    });
+  } catch {
+    return undefined;
+  }
+
+  // `where` (Windows) can list multiple matches (e.g. a .cmd shim before the
+  // real script); check each candidate for one that resolves to a JS file.
+  const candidates = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const realPath = fs.realpathSync(candidate);
+      if (realPath.endsWith(".js") && fs.existsSync(realPath)) {
+        return realPath;
+      }
+    } catch {
+      // Unresolvable candidate; try the next one.
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Locates the entrypoint of a globally-installed (preinstalled) firebase-tools,
+ * preferring the actual `firebase` binary on PATH and falling back to npm's
+ * reported global node_modules root.
+ */
+async function resolvePreinstalledEntrypoint(): Promise<string | undefined> {
+  const fromBinary = await resolveFirebaseBinaryEntrypoint();
+  if (fromBinary) {
+    return fromBinary;
+  }
+
+  let output = "";
   try {
     await exec("npm", ["root", "-g"], {
       listeners: {
